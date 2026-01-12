@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/asallaram/cbb-analytics/internal/api"
 	"github.com/asallaram/cbb-analytics/internal/storage"
@@ -11,7 +12,12 @@ import (
 )
 
 func main() {
-	mongo, err := storage.NewMongoDB("mongodb+srv://aneeshsallaram_db_user:NYGiants1@cluster0.xumhdzd.mongodb.net/?appName=Cluster0", "cbb_analytics")
+	mongoURI := os.Getenv("MONGO_URI")
+	if mongoURI == "" {
+		mongoURI = "mongodb://localhost:27017"
+	}
+
+	mongo, err := storage.NewMongoDB(mongoURI, "cbb_analytics")
 	if err != nil {
 		log.Fatal("Failed to connect to MongoDB:", err)
 	}
@@ -35,6 +41,11 @@ func main() {
 
 	corsHandler := c.Handler(router)
 
-	log.Println("🚀 API Server running on :8080")
-	log.Fatal(http.ListenAndServe(":8080", corsHandler))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("🚀 API Server running on :%s\n", port)
+	log.Fatal(http.ListenAndServe(":"+port, corsHandler))
 }
