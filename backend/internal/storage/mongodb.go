@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/asallaram/cbb-analytics/internal/models"
@@ -16,22 +17,22 @@ type MongoDB struct {
 }
 
 func NewMongoDB(uri, dbName string) (*MongoDB, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to connect to MongoDB: %w", err)
 	}
 
 	if err := client.Ping(ctx, nil); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to ping MongoDB: %w", err)
 	}
 
 	db := client.Database(dbName)
 
 	if err := createIndexes(db); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create indexes: %w", err)
 	}
 
 	return &MongoDB{
@@ -43,36 +44,37 @@ func NewMongoDB(uri, dbName string) (*MongoDB, error) {
 func createIndexes(db *mongo.Database) error {
 	ctx := context.Background()
 
-	// Indexes for games collection
-	gamesCollection := db.Collection("games")
-	_, err := gamesCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "_id", Value: 1}},
+	_, err := db.Collection("games").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "date", Value: 1}, {Key: "status", Value: 1}}},
+		{Keys: bson.D{{Key: "status", Value: 1}}},
 	})
 	if err != nil {
 		return err
 	}
 
-	// Indexes for plays collection
-	playsCollection := db.Collection("plays")
-	_, err = playsCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "game_id", Value: 1}},
+	_, err = db.Collection("plays").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "game_id", Value: 1}, {Key: "sequence", Value: 1}}},
 	})
 	if err != nil {
 		return err
 	}
 
-	_, err = playsCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "id", Value: 1}},
+	_, err = db.Collection("insights").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "game_id", Value: 1}, {Key: "timestamp", Value: -1}}},
 	})
 	if err != nil {
 		return err
 	}
 
-	return nil
+	_, err = db.Collection("live_stats").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "game_id", Value: 1}, {Key: "player_id", Value: 1}}},
+	})
+
+	return err
 }
 
 func (m *MongoDB) Close() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return m.client.Disconnect(ctx)
 }
