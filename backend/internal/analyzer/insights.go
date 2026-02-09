@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/asallaram/cbb-analytics/internal/espn"
@@ -12,6 +13,7 @@ type InsightGenerator struct {
 	plays       []espn.Play
 	playerStats map[string]*PlayerStats
 	zoneStats   map[string]*ZoneStats
+	playerNames map[string]string
 }
 
 func NewInsightGenerator(plays []espn.Play) *InsightGenerator {
@@ -19,7 +21,65 @@ func NewInsightGenerator(plays []espn.Play) *InsightGenerator {
 		plays:       plays,
 		playerStats: CalculatePlayerStats(plays),
 		zoneStats:   CalculateZoneStats(plays),
+		playerNames: extractPlayerNames(plays),
 	}
+}
+
+func extractPlayerNames(plays []espn.Play) map[string]string {
+	names := make(map[string]string)
+
+	for _, play := range plays {
+		if len(play.Participants) == 0 {
+			continue
+		}
+
+		playerID := play.Participants[0].Athlete.ID
+		text := play.Text
+
+		// Skip non-player actions
+		if strings.Contains(text, "Timeout") ||
+			strings.Contains(text, "Team Rebound") ||
+			strings.Contains(text, "Official") ||
+			strings.Contains(text, "End of") ||
+			strings.HasPrefix(text, "Foul on") {
+			continue
+		}
+
+		// Extract name before action verbs
+		words := strings.Fields(text)
+		if len(words) < 2 {
+			continue
+		}
+
+		var nameParts []string
+		for _, word := range words {
+			lower := strings.ToLower(word)
+			// Stop at action words and trailing descriptors
+			if lower == "makes" || lower == "misses" || lower == "with" ||
+				lower == "turnover" || lower == "bad" || lower == "subbing" ||
+				lower == "defensive" || lower == "offensive" || lower == "block." ||
+				lower == "steal." || lower == "rebound." {
+				break
+			}
+			nameParts = append(nameParts, word)
+		}
+
+		if len(nameParts) >= 2 {
+			name := strings.Join(nameParts, " ")
+			// Remove trailing periods
+			name = strings.TrimRight(name, ".")
+			names[playerID] = name
+		}
+	}
+
+	return names
+}
+
+func (ig *InsightGenerator) getPlayerName(playerID string) string {
+	if name, exists := ig.playerNames[playerID]; exists {
+		return name
+	}
+	return "Player"
 }
 
 func (ig *InsightGenerator) GenerateInsights(gameID string) []models.Insight {
@@ -37,6 +97,8 @@ func (ig *InsightGenerator) detectHotColdPlayers(gameID string) []models.Insight
 	var insights []models.Insight
 
 	for playerID, stats := range ig.playerStats {
+		playerName := ig.getPlayerName(playerID)
+
 		if stats.FGA < 5 {
 			continue
 		}
@@ -48,8 +110,8 @@ func (ig *InsightGenerator) detectHotColdPlayers(gameID string) []models.Insight
 				Type:      "player_hot",
 				Category:  "shooting",
 				Severity:  "high",
-				Title:     "Player on Fire",
-				Message:   fmt.Sprintf("Player shooting %d-%d (%.0f%%) from the field", stats.FGM, stats.FGA, stats.FGPct),
+				Title:     fmt.Sprintf("%s on Fire", playerName),
+				Message:   fmt.Sprintf("%s shooting %d-%d (%.0f%%) from the field", playerName, stats.FGM, stats.FGA, stats.FGPct),
 				Context: models.Context{
 					PlayerID: playerID,
 					TeamID:   stats.TeamID,
@@ -69,8 +131,8 @@ func (ig *InsightGenerator) detectHotColdPlayers(gameID string) []models.Insight
 				Type:      "player_cold",
 				Category:  "shooting",
 				Severity:  "medium",
-				Title:     "Player Struggling",
-				Message:   fmt.Sprintf("Player shooting %d-%d (%.0f%%) from the field", stats.FGM, stats.FGA, stats.FGPct),
+				Title:     fmt.Sprintf("%s Struggling", playerName),
+				Message:   fmt.Sprintf("%s shooting %d-%d (%.0f%%) from the field", playerName, stats.FGM, stats.FGA, stats.FGPct),
 				Context: models.Context{
 					PlayerID: playerID,
 					TeamID:   stats.TeamID,
@@ -90,8 +152,8 @@ func (ig *InsightGenerator) detectHotColdPlayers(gameID string) []models.Insight
 				Type:      "three_point_hot",
 				Category:  "shooting",
 				Severity:  "high",
-				Title:     "Three-Point Sniper",
-				Message:   fmt.Sprintf("Player shooting %d-%d (%.0f%%) from three", stats.ThreePM, stats.ThreePA, stats.ThreePct),
+				Title:     fmt.Sprintf("%s Lights Out from Three", playerName),
+				Message:   fmt.Sprintf("%s shooting %d-%d (%.0f%%) from beyond the arc", playerName, stats.ThreePM, stats.ThreePA, stats.ThreePct),
 				Context: models.Context{
 					PlayerID: playerID,
 					TeamID:   stats.TeamID,
@@ -112,6 +174,8 @@ func (ig *InsightGenerator) detectZonePerformance(gameID string) []models.Insigh
 	var insights []models.Insight
 
 	for playerID, zoneStats := range ig.zoneStats {
+		playerName := ig.getPlayerName(playerID)
+
 		for zone, data := range zoneStats.Zones {
 			if data.Attempts < 3 {
 				continue
@@ -125,7 +189,7 @@ func (ig *InsightGenerator) detectZonePerformance(gameID string) []models.Insigh
 					Category:  "zone_shooting",
 					Severity:  "medium",
 					Title:     "Zone Ice Cold",
-					Message:   fmt.Sprintf("Player 0-%d from %s", data.Attempts, zone),
+					Message:   fmt.Sprintf("%s 0-%d from %s", playerName, data.Attempts, zone),
 					Context: models.Context{
 						PlayerID: playerID,
 						TeamID:   zoneStats.TeamID,
@@ -147,7 +211,7 @@ func (ig *InsightGenerator) detectZonePerformance(gameID string) []models.Insigh
 					Category:  "zone_shooting",
 					Severity:  "high",
 					Title:     "Zone Dominant",
-					Message:   fmt.Sprintf("Player %d-%d (%.0f%%) from %s", data.Makes, data.Attempts, data.Pct, zone),
+					Message:   fmt.Sprintf("%s %d-%d (%.0f%%) from %s", playerName, data.Makes, data.Attempts, data.Pct, zone),
 					Context: models.Context{
 						PlayerID: playerID,
 						TeamID:   zoneStats.TeamID,
@@ -213,6 +277,8 @@ func (ig *InsightGenerator) detectStruggling(gameID string) []models.Insight {
 	var insights []models.Insight
 
 	for playerID, stats := range ig.playerStats {
+		playerName := ig.getPlayerName(playerID)
+
 		if stats.Turnovers >= 4 {
 			insights = append(insights, models.Insight{
 				GameID:    gameID,
@@ -220,8 +286,8 @@ func (ig *InsightGenerator) detectStruggling(gameID string) []models.Insight {
 				Type:      "turnover_trouble",
 				Category:  "turnovers",
 				Severity:  "medium",
-				Title:     "Turnover Issues",
-				Message:   fmt.Sprintf("Player with %d turnovers", stats.Turnovers),
+				Title:     fmt.Sprintf("%s Turnover Issues", playerName),
+				Message:   fmt.Sprintf("%s with %d turnovers", playerName, stats.Turnovers),
 				Context: models.Context{
 					PlayerID: playerID,
 					TeamID:   stats.TeamID,
@@ -239,8 +305,8 @@ func (ig *InsightGenerator) detectStruggling(gameID string) []models.Insight {
 				Type:      "foul_trouble",
 				Category:  "fouls",
 				Severity:  "high",
-				Title:     "Foul Trouble",
-				Message:   fmt.Sprintf("Player with %d fouls", stats.Fouls),
+				Title:     fmt.Sprintf("%s in Foul Trouble", playerName),
+				Message:   fmt.Sprintf("%s with %d fouls", playerName, stats.Fouls),
 				Context: models.Context{
 					PlayerID: playerID,
 					TeamID:   stats.TeamID,

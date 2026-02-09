@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/asallaram/cbb-analytics/internal/analyzer"
@@ -14,7 +15,12 @@ import (
 func main() {
 	client := espn.NewClient("https://site.api.espn.com")
 
-	mongo, err := storage.NewMongoDB("mongodb+srv://aneeshsallaram_db_user:NYGiants1@cluster0.xumhdzd.mongodb.net/?appName=Cluster0", "cbb_analytics")
+	mongoURI := os.Getenv("MONGO_URI")
+	if mongoURI == "" {
+		mongoURI = "mongodb://localhost:27017"
+	}
+
+	mongo, err := storage.NewMongoDB(mongoURI, "cbb_analytics")
 	if err != nil {
 		log.Fatal("Failed to connect to MongoDB:", err)
 	}
